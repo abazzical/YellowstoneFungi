@@ -12,10 +12,12 @@ library(ggrepel)
 library(dplyr)
 library(ggord)
 library(VennDiagram)
+library("rlang")
+library("rstatix")
 
 
 pal <- wes_palette("Zissou1", 100, type = "continuous")
-br2  = c("#FAD510", "#CB2314", "#273046")
+br2  = c("#273046", "#0B775E", "#FAD510")
 setwd("~/Documents/Gannon_Transfer_of_Work/demux/RDA")
 metadata<-read.table("~/Documents/Gannon_Transfer_of_Work/demux/metadataRabbitCreek20184PCA.txt", header = TRUE)
 metadata$pH <- factor(metadata$pH,levels = c("<6", "6-8", ">8"))
@@ -512,8 +514,8 @@ Zn<- Zn + geom_violin() + geom_jitter(height = 0, width = 0.1) +
   ) 
 Zn
 
-prow<-plot_grid(pH, tempe, TN, TC, PO4, Cd, Co, Cu, Fe, Mn, Ni, Pb, Zn, 
-                labels = c('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M'), 
+prow<-plot_grid(pH, tempe, moist, TN, TC, PO4, Cd, Co, Cu, Fe, Mn, Ni, Pb, Zn, 
+                labels = c('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'), 
                 ncol = 5,
                 label_size = 16)
 prow
@@ -680,9 +682,117 @@ summary(inv_clust)
 # MANOVA of 2 clusters ----------------------------------------------------
 
 
+
+#summary stats
+data.scores_wo_ID_ %>%
+  group_by(clusts) %>%
+  get_summary_stats(NMDS1, NMDS2, type = "mean_sd")
+#output:
+# A tibble: 4 x 5
+#clusts variable     n   mean    sd
+#<chr>  <chr>    <dbl>  <dbl> <dbl>
+#  1 a      NMDS1        9 -0.604 0.174
+#2 a      NMDS2        9 -0.374 0.204
+#3 b      NMDS1       32  0.17  0.377
+#4 b      NMDS2       32  0.105 0.291
+
+
+
+#multivariate normality
+data.scores_wo_ID_ %>%
+  select(NMDS1, NMDS2) %>%
+  mshapiro_test()
+#output:
+# A tibble: 1 x 2
+#statistic p.value
+#<dbl>   <dbl>
+#  1     0.898 0.00143
+
+#NO NORMALITY in the distribution of the data
+
+
+ # Compute distance by groups and filter outliers
+ # Use -id to omit the id column in the computation
+data.scores_wo_ID_ %>%
+  +   group_by(data.scores_wo_ID_$clusts) %>%
+  +   mahalanobis_distance() %>%
+  +   filter(is.outlier == TRUE) %>%
+  +   as.data.frame()
+#output:
+#[1] NMDS1      NMDS2      mahal.dist is.outlier
+#<0 rows> (or 0-length row.names)
+# NO OUTLIERS IN THE DATA
+
+
+
+#check homogeneity of variance assumption
+data.scores_wo_ID_ %>% 
+  gather(key = "variable", value = "value", NMDS1, NMDS2) %>%
+  group_by(variable) %>%
+  levene_test(value ~ clusts)
+#output:
+# A tibble: 2 x 5
+#variable   df1   df2 statistic      p
+#<chr>    <int> <int>     <dbl>  <dbl>
+#  1 NMDS1        1    39      3.10 0.0864
+#  2 NMDS2        1    39      1.99 0.166 
+
+#Result not significant, therefore there is no homogeneity in the variance, they have unequal variances.
+
+
+#MANOVA
+
+model <- lm(cbind(NMDS1, NMDS2) ~ clusts, data.scores_wo_ID_)
+Manova(model, test.statistic = "Pillai")
+#output
+#Type II MANOVA Tests: Pillai test statistic
+#Df test stat approx F num Df den Df    Pr(>F)    
+#clusts  1   0.82859   91.843      2     38 2.798e-15 ***
+#  ---
+#  Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+
+Manova(model, test.statistic="Wilks") 
+#output
+#Type II MANOVA Tests: Wilks test statistic
+#Df test stat approx F num Df den Df    Pr(>F)    
+#clusts  1   0.17141   91.843      2     38 2.798e-15 ***
+#  ---
+#  Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+
 clust2man<-manova(cbind(data.scores_wo_ID_$NMDS1,data.scores_wo_ID_$NMDS2) ~ as.factor(data.scores_wo_ID_$clusts), data=data.scores_wo_ID_, subset=as.factor(data.scores_wo_ID_$clusts) %in% c("a","b"))
 
 summary(clust2man)
+
+
+#post-hoc
+
+
+
+
+# test normal distribution and equal variances
+
+boxplot(data.scores_wo_ID_$NMDS1~as.factor(data.scores_wo_ID_$clusts))
+plot(lm(data.scores_wo_ID_$NMDS1~as.factor(data.scores_wo_ID_$clusts)))
+
+
+
+# samples x species as input
+library(vegan)
+
+
+clust2adonis <- adonis(cbind(data.scores_wo_ID_$NMDS1,data.scores_wo_ID_$NMDS2) ~ as.factor(data.scores_wo_ID_$clusts), data=data.scores_wo_ID_, strata=as.factor(data.scores_wo_ID_$clusts) %in% c("a","b"),
+                          permutations=999, method = "bray")
+
+clust2adonis <- adonis(cbind(data.scores_wo_ID_$NMDS1,data.scores_wo_ID_$NMDS2) ~ as.factor(data.scores_wo_ID_$clusts), data=data.scores_wo_ID_, 
+                          permutations=9999, method = "bray")
+
+
+
+
+# P-value
+print(as.data.frame(clust2permanova$aov.tab)["as.factor(data.scores_wo_ID_$clusts)", "Pr(>F)"])
 
 # Guilds NMDS -------------------------------------------------------------
 
@@ -836,7 +946,7 @@ venn.diagram(
   cat.pos = c(-27, 27),
   cat.dist = c(0.055, 0.055),
   cat.fontfamily = "sans",
-  cat.col = c("#FAD510", "#273046"),
+  cat.col = c("#FAD510", "#273046")
   #rotation = 1
 )
 data.scoresEM$clusts <- EM_meta$clusts  #  add the grp variable created earlier
@@ -1503,7 +1613,7 @@ YNP1p9 <- YNP1[which(YNP1$pH == "9"), ]
 avg_YNP1p9 <- aggregate(YNP1p9$abs_mean, by = list(YNP1p9$day_measured), FUN = mean)
 pH<-as.character(phYNP$pH) # can't remember if this is actually useful or needed
 phYNP1plot<-ggplot(YNP1) +
-  scale_color_manual(values = wes_palette("FantasticFox1")) + #you can choose whatever colors you prefer, I like Wes Anderson palettes, and Bottle Rocket has nice distinctive colors - I like the Zissou palette, but they are difficult to see for color blind folk
+  scale_color_manual(values = br2) + #you can choose whatever colors you prefer, I like Wes Anderson palettes, and Bottle Rocket has nice distinctive colors - I like the Zissou palette, but they are difficult to see for color blind folk
   geom_point(aes(day_measured, abs_mean, color = as.factor(pH)), size = 4) + # plots points
   geom_line(aes(Group.1, x), avg_YNP1p4)+ #plots lines
   geom_line(aes(Group.1, x), avg_YNP1p7)+
@@ -1513,7 +1623,7 @@ phYNP1plot<-ggplot(YNP1) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Radius (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "pH")
 #To save a graph only with your species, use something like this:
 # + ggsave("plotAgaricusPHseamus.pdf", height=6, width=8, device="pdf") # save a PDF 3 inches by 4 inches
@@ -1528,7 +1638,7 @@ YNP6p9 <- YNP6[which(YNP6$pH == "9"), ]
 avg_YNP6p9 <- aggregate(YNP6p9$abs_mean, by = list(YNP6p9$day_measured), FUN = mean)
 pH<-as.character(phYNP$pH)
 phYNP6plot<-ggplot(YNP6) +
-  scale_color_manual(values = wes_palette("FantasticFox1")) +
+  scale_color_manual(values = br2) +
   geom_point(aes(day_measured, abs_mean, color = as.factor(pH)), size = 4) + 
   geom_line(aes(Group.1, x), avg_YNP6p4)+
   geom_line(aes(Group.1, x), avg_YNP6p7)+
@@ -1538,7 +1648,7 @@ phYNP6plot<-ggplot(YNP6) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Radius (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "pH")
 
 #YNP56 - a soil mold
@@ -1551,7 +1661,7 @@ YNP56p9 <- YNP56[which(YNP56$pH == "9"), ]
 avg_YNP56p9 <- aggregate(YNP56p9$abs_mean, by = list(YNP56p9$day_measured), FUN = mean)
 pH<-as.character(phYNP$pH)
 phYNP56plot<-ggplot(YNP56) +
-  scale_color_manual(values = wes_palette("FantasticFox1")) +
+  scale_color_manual(values = br2) +
   geom_point(aes(day_measured, abs_mean, color = as.factor(pH)), size = 4) + 
   geom_line(aes(Group.1, x), avg_YNP56p4)+
   geom_line(aes(Group.1, x), avg_YNP56p7)+
@@ -1561,7 +1671,7 @@ phYNP56plot<-ggplot(YNP56) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Radius (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "pH")
 
 #YNP67 - another soil mold
@@ -1574,7 +1684,7 @@ YNP67p9 <- YNP67[which(YNP67$pH == "9"), ]
 avg_YNP67p9 <- aggregate(YNP67p9$abs_mean, by = list(YNP67p9$day_measured), FUN = mean)
 pH<-as.character(phYNP$pH)
 phYNP67plot<-ggplot(YNP67) +
-  scale_color_manual(values = wes_palette("FantasticFox1")) +
+  scale_color_manual(values = br2) +
   geom_point(aes(day_measured, abs_mean, color = as.factor(pH)),size=4) + 
   geom_line(aes(Group.1, x), avg_YNP67p4)+
   geom_line(aes(Group.1, x), avg_YNP67p7)+
@@ -1584,7 +1694,7 @@ phYNP67plot<-ggplot(YNP67) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Radius (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "pH")
 
 legend_b <- get_legend(
@@ -1628,7 +1738,7 @@ YNP1plot<-ggplot(YNP1) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Area (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "Temperature")
 
 #YNP6
@@ -1651,7 +1761,7 @@ YNP6plot<-ggplot(YNP6) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Area (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "Temperature")
 
 #YNP56
@@ -1674,7 +1784,7 @@ YNP56plot<-ggplot(YNP56) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Area (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "Temperature")
 
 #YNP67
@@ -1697,7 +1807,7 @@ YNP67plot<-ggplot(YNP67) +
   theme(axis.title.x = element_text( size = 16))+
   theme(axis.title.y = element_text(size = 16))+
   xlab("Day Measured")+
-  ylab("Fungus Area (mm)")+
+  ylab("Fungal Growth (mm)")+
   labs(colour = "Temperature")
 
 legend_b <- get_legend(
@@ -1711,4 +1821,50 @@ prowTemp<-plot_grid(YNP1plot+ theme(legend.position="none"), YNP6plot+ theme(leg
 
 plot_grid(prowTemp, legend_b, ncol = 1, rel_heights = c(1, .1))
 ggsave("plotsTempYNP.pdf", height=7, width=6, device="pdf") #
+
+
+
+
+
+# Species accumulation curve ----------------------------------------------
+
+# Species accumulation curve
+data(BCI)
+sp1 <- specaccum(BCI)
+sp1.1<- specaccum(rabbit_wo_14)
+sp2 <- specaccum(BCI, "random")
+sp2.1<- specaccum(rabbit_wo_14, "random")
+summary(sp2)
+summary(sp2.1)
+plot(sp1, ci.type="poly", col="blue", lwd=2, ci.lty=0, ci.col="lightblue")
+boxplot(sp2, col="yellow", add=TRUE, pch="+")
+
+plot(sp1.1, ci.type="poly", col="blue", lwd=2, ci.lty=0, ci.col="lightblue")
+boxplot(sp2.1, col="yellow", add=TRUE, pch="+")
+
+## Fit Lomolino model to the exact accumulation
+mod1 <- fitspecaccum(sp1, "lomolino")
+coef(mod1)
+fitted(mod1)
+plot(sp1)
+
+mod1 <- fitspecaccum(sp1.1, "lomolino")
+coef(mod1)
+fitted(mod1)
+plot(sp1.1)
+
+
+## Add Lomolino model using argument 'add'
+plot(mod1, add = TRUE, col=2, lwd=2)
+## Fit Arrhenius models to all random accumulations
+mods <- fitspecaccum(sp2, "arrh")
+plot(mods, col="hotpink")
+boxplot(sp2, col = "yellow", border = "blue", lty=1, cex=0.3, add= TRUE)
+
+mods <- fitspecaccum(sp2.1, "arrh")
+plot(mods, col="hotpink")
+boxplot(sp2.1, col = "yellow", border = "blue", lty=1, cex=0.3, add= TRUE)
+
+## Use nls() methods to the list of models
+sapply(mods$models, AIC)
 
